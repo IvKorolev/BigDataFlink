@@ -36,7 +36,7 @@ def main():
             sale_quantity INT, sale_total_price DOUBLE
         ) WITH (
             'connector' = 'kafka',
-            'topic' = 'shop_events',
+            'topic' = 'mock_data',
             'properties.bootstrap.servers' = 'kafka_lab3:9092',
             'properties.group.id' = 'flink-consumer-group',
             'format' = 'json',

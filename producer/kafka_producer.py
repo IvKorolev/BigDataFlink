@@ -2,15 +2,16 @@ import csv
 import json
 import time
 import glob
+import os
 from datetime import datetime
-from kafka import KafkaProducer
+from kafka import KafkaProducer, KafkaConsumer
+from kafka.structs import TopicPartition
 
 def parse_date(date_str):
     try:
         dt = datetime.strptime(date_str, '%m/%d/%Y')
-        date_id = int(dt.strftime('%Y%m%d'))
         return {
-            'date_id': date_id,
+            'date_id': int(dt.strftime('%Y%m%d')),
             'sql_date': dt.strftime('%Y-%m-%d'),
             'day': dt.day,
             'month': dt.month,
@@ -21,18 +22,21 @@ def parse_date(date_str):
         return None
 
 def main():
-    print("Waiting for Kafka to start...")
+    print("Waiting for Kafka and Topic to be ready...")
     time.sleep(15)
+
+    scenario = os.environ.get('SCENARIO', 'A').upper()
+    print(f"ЗАПУСК СЦЕНАРИЯ: {scenario}")
 
     producer = KafkaProducer(
         bootstrap_servers=['kafka_lab3:9092'],
         value_serializer=lambda v: json.dumps(v).encode('utf-8')
     )
 
-    topic_name = 'shop_events'
+    topic_name = 'mock_data'
     csv_files = glob.glob('/data/*.csv')
 
-    stores, suppliers = {}, {}
+    stores, suppliers, customers, sellers, products = {}, {}, {}, {}, {}
     global_id_counter = 1
 
     for file in sorted(csv_files):
@@ -58,19 +62,46 @@ def main():
                 prod_expiry = parse_date(row['product_expiry_date'])
                 row['product_expiry_date_sql'] = prod_expiry['sql_date'] if prod_expiry else None
 
-                store_email = row['store_email']
-                if store_email not in stores: stores[store_email] = len(stores) + 1
-                row['store_id'] = stores[store_email]
+                if row['customer_email'] not in customers: customers[row['customer_email']] = len(customers) + 1
+                row['sale_customer_id'] = customers[row['customer_email']]
+
+                if row['seller_email'] not in sellers: sellers[row['seller_email']] = len(sellers) + 1
+                row['sale_seller_id'] = sellers[row['seller_email']]
+
+                if row['product_name'] not in products: products[row['product_name']] = len(products) + 1
+                row['sale_product_id'] = products[row['product_name']]
+
+                if row['store_email'] not in stores: stores[row['store_email']] = len(stores) + 1
+                row['store_id'] = stores[row['store_email']]
 
                 supplier_email = row['supplier_email']
                 if supplier_email not in suppliers: suppliers[supplier_email] = len(suppliers) + 1
                 row['supplier_id'] = suppliers[supplier_email]
 
-                producer.send(topic_name, value=row)
+                if scenario == 'A':
+                    producer.send(topic_name, value=row)
+                else:
+                    # В качестве ключа возьмем ID магазина (все продажи одного магазина летят в одну партицию)
+                    key_bytes = str(row['store_id']).encode('utf-8')
+                    producer.send(topic_name, key=key_bytes, value=row)
+
                 time.sleep(0.005)
 
     producer.flush()
-    print(f"Successfully sent {global_id_counter - 1} records to Kafka!")
+    print(f"Успешно отправлено {global_id_counter - 1} сообщений в Kafka!\n")
+
+    print("АНАЛИЗ НАГРУЗКИ ПАРТИЦИЙ")
+    consumer = KafkaConsumer(bootstrap_servers=['kafka_lab3:9092'])
+    partitions = consumer.partitions_for_topic(topic_name)
+
+    if partitions:
+        for p in sorted(partitions):
+            tp = TopicPartition(topic_name, p)
+            consumer.assign([tp])
+            consumer.seek_to_end(tp)
+            end_offset = consumer.position(tp)
+            print(f"Партиция {p}: {end_offset} сообщений")
+    consumer.close()
 
 
 if __name__ == '__main__':

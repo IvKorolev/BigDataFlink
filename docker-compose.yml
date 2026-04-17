@@ -35,6 +35,34 @@ services:
     networks:
       - lab3_network
 
+  # автосоздание топика mock_data с 4 партициями
+  kafka-init:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka_init
+    depends_on:
+      - kafka
+    command: >
+      bash -c "
+        echo 'Waiting for Kafka...' &&
+        sleep 10 &&
+        kafka-topics --create --if-not-exists --bootstrap-server kafka_lab3:9092 --partitions 4 --replication-factor 1 --topic mock_data &&
+        echo 'Topic mock_data with 4 partitions created!'
+      "
+    networks:
+      - lab3_network
+
+  # юай для скриншотов
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka_ui
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: lab_cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka_lab3:9092
+    networks:
+      - lab3_network
+
   # JobManager - распределяет задачи
   jobmanager:
     build: ./flink_job
@@ -69,7 +97,9 @@ services:
     build: ./producer
     container_name: kafka_producer
     depends_on:
-      - kafka
+      - kafka-init
+    environment:
+      - SCENARIO=A   # сценарий "A" или "B"
     volumes:
       - ./data:/data
     networks:
